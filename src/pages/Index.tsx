@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ExternalLink } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -840,6 +840,20 @@ export default function Index() {
               </div>
             )}
 
+            <a
+              href="https://ideoideis.ro/proiectele/festivalul/regulament-participare-trupe/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className={cn(
+                "inline-flex items-center gap-2 px-4 py-2",
+                "border border-primary text-primary hover:bg-primary hover:text-primary-foreground",
+                "transition-colors text-sm font-medium lowercase"
+              )}
+            >
+              <ExternalLink className="size-4" />
+              citește regulamentul festivalului
+            </a>
+
             <div className="flex items-start gap-3 pt-2">
               <Checkbox
                 id="acord"
@@ -856,8 +870,8 @@ export default function Index() {
                       Termeni și condiții
                     </button>
                   }
-                />{" "}
-                și{" "}
+                />
+                ,{" "}
                 <LegalDialog
                   title="Politica de confidențialitate"
                   content={confidentialitateMd}
@@ -866,7 +880,16 @@ export default function Index() {
                       Politica de confidențialitate
                     </button>
                   }
-                />
+                />{" "}
+                și{" "}
+                <a
+                  href="https://ideoideis.ro/proiectele/festivalul/regulament-participare-trupe/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-primary underline"
+                >
+                  regulamentul de participare
+                </a>
                 . *
               </Label>
             </div>
