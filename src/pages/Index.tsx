@@ -60,6 +60,18 @@ const emptyParticipant = (): Participant => ({
 
 const MAX_PARTICIPANTI = 15;
 
+// Supabase storage keys can't contain diacritics, commas or slashes, and the
+// troupe / participant names have all of those (e.g. "Atelierul de teatru,
+// Botoșani"). Strip accents and any unsafe character, keeping the text readable
+// (spaces and casing preserved) so the folder/file names stay human-friendly.
+const safeName = (s: string) =>
+  s
+    .normalize("NFD")                   // separate base letters from accents
+    .replace(/\p{Diacritic}/gu, "")     // drop the accents (ș→s, â→a, …)
+    .replace(/[^a-zA-Z0-9 _-]+/g, "")   // drop anything else unsafe (commas, /, …)
+    .replace(/\s+/g, " ")
+    .trim();
+
 export default function Index() {
   // submission state
   const [submitting, setSubmitting] = useState(false);
@@ -301,16 +313,33 @@ export default function Index() {
           : {};
 
       // 1c. Upload each participant's ID photo (buletin) to the PRIVATE bucket,
-      // then store the structured record with only the storage path.
+      // organised as "<trupă>/<nume participant>.<ext>" so the festival team
+      // gets one folder per group with each photo named after the person.
+      // Keys are built up-front (sync) so we can guarantee they're unique within
+      // the group before any upload starts.
+      const trupaFolder = safeName(trupa) || "trupa";
+      const usedNames = new Set<string>();
+      const buletinKeys = participanti.map((p, idx) => {
+        if (!p.buletin) return null;
+        const ext = p.buletin.name.split(".").pop()?.toLowerCase() ?? "jpg";
+        const base = safeName(`${p.prenume} ${p.nume}`) || `participant ${idx + 1}`;
+        // Disambiguate if two participants resolve to the same file name.
+        let candidate = `${base}.${ext}`;
+        for (let n = 2; usedNames.has(candidate); n++) candidate = `${base} (${n}).${ext}`;
+        usedNames.add(candidate);
+        return `${trupaFolder}/${candidate}`;
+      });
+
       const participantiData = await Promise.all(
-        participanti.map(async ({ buletin, ...rest }) => {
+        participanti.map(async ({ buletin, ...rest }, idx) => {
           let buletin_path: string | null = null;
-          if (buletin) {
-            const ext = buletin.name.split(".").pop()?.toLowerCase() ?? "jpg";
-            const key = `${crypto.randomUUID()}.${ext}`;
+          const key = buletinKeys[idx];
+          if (buletin && key) {
+            // upsert: true so a group re-submitting overwrites its own folder
+            // instead of failing on an "already exists" error.
             const { error: bErr } = await supabase.storage
               .from(TRUPE_CI_BUCKET)
-              .upload(key, buletin, { contentType: buletin.type, upsert: false });
+              .upload(key, buletin, { contentType: buletin.type, upsert: true });
             if (bErr) throw bErr;
             buletin_path = key;
           }
