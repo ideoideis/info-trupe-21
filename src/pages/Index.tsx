@@ -127,6 +127,8 @@ export default function Index() {
   const [coordTricou, setCoordTricou] = useState("");
   const [coordEmail, setCoordEmail] = useState("");
   const [coordTelefon, setCoordTelefon] = useState("");
+  const [coordRestrictii, setCoordRestrictii] = useState("");
+  const [coordBuletin, setCoordBuletin] = useState<File | null>(null);
 
   // pentru contract
   const [persoanaTip, setPersoanaTip] = useState("");
@@ -192,6 +194,8 @@ export default function Index() {
     if (!has(coordTricou)) e.coordTricou = REQUIRED;
     if (!has(coordEmail)) e.coordEmail = REQUIRED;
     if (!has(coordTelefon)) e.coordTelefon = REQUIRED;
+    if (!has(coordRestrictii)) e.coordRestrictii = REQUIRED;
+    if (!coordBuletin) e.coordBuletin = "Atașează poza buletinului";
 
     // pentru contract
     if (!has(persoanaTip)) e.persoanaTip = REQUIRED;
@@ -220,7 +224,8 @@ export default function Index() {
   }, [
     trupa, spectacolOptional, numeSpectacol, dramaturg, echipaCreativa,
     distributie, despreSpectacol, necesarTehnic, photoFile, participanti,
-    coordNume, coordVarsta, coordTricou, coordEmail, coordTelefon, persoanaTip,
+    coordNume, coordVarsta, coordTricou, coordEmail, coordTelefon,
+    coordRestrictii, coordBuletin, persoanaTip,
     pfNumeComplet, pfAdresa, pfCnp, pfCopieCI, pfTelefon, pfEmail, pfContBancar,
     pfBanca, pjNume, pjSediu, pjCui, pjRegCom, pjContBancar, pjBanca,
     pjReprezentant, acord,
@@ -354,6 +359,14 @@ export default function Index() {
         })
       );
 
+      // 1d. Coordinator's ID photo goes in the same group folder, suffixed
+      // "-coord" so it sorts/reads apart from the participants' scans.
+      let coordonator_buletin_path: string | null = null;
+      if (coordBuletin) {
+        const coordBase = `${safeName(coordNume) || "coordonator"}-coord`;
+        coordonator_buletin_path = await uploadBuletin(coordBuletin, coordBase);
+      }
+
       // 2. Insert the row
       const { error } = await supabase.from("trupe_submissions").insert({
         trupa,
@@ -371,6 +384,8 @@ export default function Index() {
         coordonator_tricou: coordTricou,
         coordonator_email: coordEmail,
         coordonator_telefon: coordTelefon,
+        coordonator_restrictii: coordRestrictii,
+        coordonator_buletin_path: coordonator_buletin_path,
         persoana_tip: persoanaTip,
         contract_details,
         acord_termeni: acord,
@@ -790,6 +805,47 @@ export default function Index() {
                 placeholder="…"
                 required
               />
+            </Field>
+
+            <Field
+              id="coordRestrictii"
+              label="restricții alimentare"
+              required
+              helper="ex: fără / vegetarian / alergii"
+              error={fieldError("coordRestrictii")}
+            >
+              <Input
+                value={coordRestrictii}
+                onChange={(e) => setCoordRestrictii(e.target.value)}
+                placeholder="…"
+                required
+              />
+            </Field>
+
+            <Field
+              id="coordBuletin"
+              label="poză buletin"
+              required
+              helper="format: jpg, jpeg, png, pdf — stocat privat"
+              error={fieldError("coordBuletin")}
+            >
+              <label
+                className={cn(
+                  "inline-flex items-center gap-2 px-4 py-2 cursor-pointer",
+                  "bg-primary text-primary-foreground hover:bg-primary/90 transition-colors",
+                  "text-sm font-medium"
+                )}
+              >
+                <Plus className="size-4" />
+                {coordBuletin ? coordBuletin.name : "alege un fișier"}
+                <input
+                  type="file"
+                  accept=".jpg,.jpeg,.png,.pdf,image/jpeg,image/png,application/pdf"
+                  className="hidden"
+                  onChange={(e) => setCoordBuletin(e.target.files?.[0] ?? null)}
+                  required={!coordBuletin}
+                />
+              </label>
             </Field>
           </section>
 
