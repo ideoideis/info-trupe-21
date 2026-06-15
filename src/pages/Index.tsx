@@ -315,33 +315,40 @@ export default function Index() {
       // 1c. Upload each participant's ID photo (buletin) to the PRIVATE bucket,
       // organised as "<trupă>/<nume participant>.<ext>" so the festival team
       // gets one folder per group with each photo named after the person.
-      // Keys are built up-front (sync) so we can guarantee they're unique within
-      // the group before any upload starts.
+      //
+      // The bucket is INSERT-only for the public form (no overwrite permission —
+      // these are sensitive ID scans), so we never use upsert. If a name is
+      // already taken — another participant in this batch, or the same group
+      // re-submitting — we fall back to "name (2)", "name (3)", … rather than
+      // overwriting an existing scan or failing the whole submission.
       const trupaFolder = safeName(trupa) || "trupa";
       const usedNames = new Set<string>();
-      const buletinKeys = participanti.map((p, idx) => {
-        if (!p.buletin) return null;
-        const ext = p.buletin.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        const base = safeName(`${p.prenume} ${p.nume}`) || `participant ${idx + 1}`;
-        // Disambiguate if two participants resolve to the same file name.
-        let candidate = `${base}.${ext}`;
-        for (let n = 2; usedNames.has(candidate); n++) candidate = `${base} (${n}).${ext}`;
-        usedNames.add(candidate);
-        return `${trupaFolder}/${candidate}`;
-      });
+
+      const uploadBuletin = async (file: File, base: string): Promise<string> => {
+        const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+        for (let n = 1; n < 50; n++) {
+          const name = n === 1 ? `${base}.${ext}` : `${base} (${n}).${ext}`;
+          if (usedNames.has(name)) continue; // taken earlier in this batch
+          usedNames.add(name);
+          const key = `${trupaFolder}/${name}`;
+          const { error } = await supabase.storage
+            .from(TRUPE_CI_BUCKET)
+            .upload(key, file, { contentType: file.type, upsert: false });
+          if (!error) return key;
+          // 409 / "already exists" → name taken in storage, try the next suffix.
+          const status = String((error as { statusCode?: string }).statusCode ?? "");
+          if (status !== "409" && !/exist/i.test(error.message)) throw error;
+        }
+        throw new Error("Nu am putut încărca poza buletinului. Încearcă din nou.");
+      };
 
       const participantiData = await Promise.all(
         participanti.map(async ({ buletin, ...rest }, idx) => {
           let buletin_path: string | null = null;
-          const key = buletinKeys[idx];
-          if (buletin && key) {
-            // upsert: true so a group re-submitting overwrites its own folder
-            // instead of failing on an "already exists" error.
-            const { error: bErr } = await supabase.storage
-              .from(TRUPE_CI_BUCKET)
-              .upload(key, buletin, { contentType: buletin.type, upsert: true });
-            if (bErr) throw bErr;
-            buletin_path = key;
+          if (buletin) {
+            const base =
+              safeName(`${rest.prenume} ${rest.nume}`) || `participant ${idx + 1}`;
+            buletin_path = await uploadBuletin(buletin, base);
           }
           return { ...rest, buletin_path };
         })
