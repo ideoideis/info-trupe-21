@@ -266,6 +266,36 @@ export default function Index() {
     }
     setSubmitting(true);
     try {
+      // All ID scans (participant + coordinator buletine, and the persoană
+      // fizică copie CI) live in the PRIVATE `trupe-ci` bucket, organised into
+      // per-group folders. The bucket is INSERT-only for the public form (no
+      // overwrite — these are sensitive scans), so we never upsert: if a key is
+      // already taken (same batch, or a group re-submitting) we fall back to
+      // "name (2)", "name (3)", … instead of overwriting or failing.
+      const trupaFolder = safeName(trupa) || "trupa";
+      const usedKeys = new Set<string>();
+      const uploadCi = async (
+        file: File,
+        folder: string,
+        base: string
+      ): Promise<string> => {
+        const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
+        for (let n = 1; n < 50; n++) {
+          const name = n === 1 ? `${base}.${ext}` : `${base} (${n}).${ext}`;
+          const key = `${folder}/${name}`;
+          if (usedKeys.has(key)) continue; // taken earlier in this batch
+          usedKeys.add(key);
+          const { error } = await supabase.storage
+            .from(TRUPE_CI_BUCKET)
+            .upload(key, file, { contentType: file.type, upsert: false });
+          if (!error) return key;
+          // 409 / "already exists" → key taken in storage, try the next suffix.
+          const status = String((error as { statusCode?: string }).statusCode ?? "");
+          if (status !== "409" && !/exist/i.test(error.message)) throw error;
+        }
+        throw new Error("Nu am putut încărca fișierul. Încearcă din nou.");
+      };
+
       // 1. Upload photo to storage if present
       let photo_url: string | null = null;
       if (photoFile) {
@@ -279,17 +309,13 @@ export default function Index() {
         photo_url = pub.publicUrl;
       }
 
-      // 1b. Upload "copie CI" when persoană fizică — PRIVATE bucket.
-      // We store only the storage path; the file is read later via a signed URL.
+      // 1b. "copie CI" (persoană fizică, for the contract/payment) goes in a
+      // separate "payments" area: "payments/<trupă>/<nume complet>.<ext>".
+      // Stored as a path only; read later via a short-lived signed URL.
       let copie_ci_path: string | null = null;
       if (persoanaTip === "fizica" && pfCopieCI) {
-        const ext = pfCopieCI.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        const key = `${crypto.randomUUID()}.${ext}`;
-        const { error: ciErr } = await supabase.storage
-          .from(TRUPE_CI_BUCKET)
-          .upload(key, pfCopieCI, { contentType: pfCopieCI.type, upsert: false });
-        if (ciErr) throw ciErr;
-        copie_ci_path = key;
+        const base = safeName(pfNumeComplet) || "copie-ci";
+        copie_ci_path = await uploadCi(pfCopieCI, `payments/${trupaFolder}`, base);
       }
 
       // conditional contract block — shape depends on persoană fizică / juridică
@@ -317,43 +343,14 @@ export default function Index() {
             }
           : {};
 
-      // 1c. Upload each participant's ID photo (buletin) to the PRIVATE bucket,
-      // organised as "<trupă>/<nume participant>.<ext>" so the festival team
-      // gets one folder per group with each photo named after the person.
-      //
-      // The bucket is INSERT-only for the public form (no overwrite permission —
-      // these are sensitive ID scans), so we never use upsert. If a name is
-      // already taken — another participant in this batch, or the same group
-      // re-submitting — we fall back to "name (2)", "name (3)", … rather than
-      // overwriting an existing scan or failing the whole submission.
-      const trupaFolder = safeName(trupa) || "trupa";
-      const usedNames = new Set<string>();
-
-      const uploadBuletin = async (file: File, base: string): Promise<string> => {
-        const ext = file.name.split(".").pop()?.toLowerCase() ?? "jpg";
-        for (let n = 1; n < 50; n++) {
-          const name = n === 1 ? `${base}.${ext}` : `${base} (${n}).${ext}`;
-          if (usedNames.has(name)) continue; // taken earlier in this batch
-          usedNames.add(name);
-          const key = `${trupaFolder}/${name}`;
-          const { error } = await supabase.storage
-            .from(TRUPE_CI_BUCKET)
-            .upload(key, file, { contentType: file.type, upsert: false });
-          if (!error) return key;
-          // 409 / "already exists" → name taken in storage, try the next suffix.
-          const status = String((error as { statusCode?: string }).statusCode ?? "");
-          if (status !== "409" && !/exist/i.test(error.message)) throw error;
-        }
-        throw new Error("Nu am putut încărca poza buletinului. Încearcă din nou.");
-      };
-
+      // 1c. Each participant's ID photo → "<trupă>/<nume participant>.<ext>".
       const participantiData = await Promise.all(
         participanti.map(async ({ buletin, ...rest }, idx) => {
           let buletin_path: string | null = null;
           if (buletin) {
             const base =
               safeName(`${rest.prenume} ${rest.nume}`) || `participant ${idx + 1}`;
-            buletin_path = await uploadBuletin(buletin, base);
+            buletin_path = await uploadCi(buletin, trupaFolder, base);
           }
           return { ...rest, buletin_path };
         })
@@ -364,7 +361,7 @@ export default function Index() {
       let coordonator_buletin_path: string | null = null;
       if (coordBuletin) {
         const coordBase = `${safeName(coordNume) || "coordonator"}-coord`;
-        coordonator_buletin_path = await uploadBuletin(coordBuletin, coordBase);
+        coordonator_buletin_path = await uploadCi(coordBuletin, trupaFolder, coordBase);
       }
 
       // 2. Insert the row
