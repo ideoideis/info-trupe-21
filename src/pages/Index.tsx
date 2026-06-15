@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Plus, Trash2, ExternalLink } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Plus, Trash2, ExternalLink, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -64,6 +64,9 @@ export default function Index() {
   // submission state
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // Becomes true after the first blocked submit, then required-field errors
+  // are shown live (and clear as the user fills each one in).
+  const [showErrors, setShowErrors] = useState(false);
 
   // despre spectacol
   const [trupa, setTrupa] = useState("");
@@ -137,12 +140,109 @@ export default function Index() {
 
   const [acord, setAcord] = useState(false);
 
+  // ── Required-field validation ──────────────────────────────────────────
+  // Native HTML `required` silently refuses to submit when an empty required
+  // control isn't focusable (the Radix Selects + hidden file inputs) — the
+  // browser only logs to the console, so the person filling the form sees
+  // nothing happen. We validate in JS instead (the <form> has noValidate) and
+  // surface every missing field. `errors` is derived, so once `showErrors` is
+  // on, a field's highlight clears the moment it's filled in.
+  const REQUIRED = "Câmp obligatoriu";
+  const errors = useMemo<Record<string, string>>(() => {
+    const e: Record<string, string> = {};
+    const has = (s: string) => s.trim().length > 0;
+
+    // despre spectacol
+    if (!has(trupa)) e.trupa = REQUIRED;
+    if (!spectacolOptional && !has(numeSpectacol)) e.numeSpectacol = REQUIRED;
+    if (!has(dramaturg)) e.dramaturg = REQUIRED;
+    if (!has(echipaCreativa)) e.echipaCreativa = REQUIRED;
+    if (!has(distributie)) e.distributie = REQUIRED;
+    if (!has(despreSpectacol)) e.despreSpectacol = REQUIRED;
+    if (!has(necesarTehnic)) e.necesarTehnic = REQUIRED;
+    if (!photoFile) e.photoFile = "Atașează o fotografie";
+
+    // despre participanți
+    participanti.forEach((p, i) => {
+      if (!has(p.nume)) e[`participant-${i}-nume`] = REQUIRED;
+      if (!has(p.prenume)) e[`participant-${i}-prenume`] = REQUIRED;
+      if (!has(p.functie)) e[`participant-${i}-functie`] = REQUIRED;
+      if (!has(p.varsta)) e[`participant-${i}-varsta`] = REQUIRED;
+      if (!has(p.telefon)) e[`participant-${i}-telefon`] = REQUIRED;
+      if (!has(p.tricou)) e[`participant-${i}-tricou`] = REQUIRED;
+      if (!has(p.restrictii)) e[`participant-${i}-restrictii`] = REQUIRED;
+      if (!p.buletin) e[`participant-${i}-buletin`] = "Atașează poza buletinului";
+    });
+
+    // despre coordonator
+    if (!has(coordNume)) e.coordNume = REQUIRED;
+    if (!has(coordVarsta)) e.coordVarsta = REQUIRED;
+    if (!has(coordTricou)) e.coordTricou = REQUIRED;
+    if (!has(coordEmail)) e.coordEmail = REQUIRED;
+    if (!has(coordTelefon)) e.coordTelefon = REQUIRED;
+
+    // pentru contract
+    if (!has(persoanaTip)) e.persoanaTip = REQUIRED;
+    if (persoanaTip === "fizica") {
+      if (!has(pfNumeComplet)) e.pfNumeComplet = REQUIRED;
+      if (!has(pfAdresa)) e.pfAdresa = REQUIRED;
+      if (!has(pfCnp)) e.pfCnp = REQUIRED;
+      if (!pfCopieCI) e.pfCopieCI = "Atașează copia CI";
+      if (!has(pfTelefon)) e.pfTelefon = REQUIRED;
+      if (!has(pfEmail)) e.pfEmail = REQUIRED;
+      if (!has(pfContBancar)) e.pfContBancar = REQUIRED;
+      if (!has(pfBanca)) e.pfBanca = REQUIRED;
+    } else if (persoanaTip === "juridica") {
+      if (!has(pjNume)) e.pjNume = REQUIRED;
+      if (!has(pjSediu)) e.pjSediu = REQUIRED;
+      if (!has(pjCui)) e.pjCui = REQUIRED;
+      if (!has(pjRegCom)) e.pjRegCom = REQUIRED;
+      if (!has(pjContBancar)) e.pjContBancar = REQUIRED;
+      if (!has(pjBanca)) e.pjBanca = REQUIRED;
+      if (!has(pjReprezentant)) e.pjReprezentant = REQUIRED;
+    }
+
+    if (!acord) e.acord = "Trebuie să accepți termenii și condițiile.";
+
+    return e;
+  }, [
+    trupa, spectacolOptional, numeSpectacol, dramaturg, echipaCreativa,
+    distributie, despreSpectacol, necesarTehnic, photoFile, participanti,
+    coordNume, coordVarsta, coordTricou, coordEmail, coordTelefon, persoanaTip,
+    pfNumeComplet, pfAdresa, pfCnp, pfCopieCI, pfTelefon, pfEmail, pfContBancar,
+    pfBanca, pjNume, pjSediu, pjCui, pjRegCom, pjContBancar, pjBanca,
+    pjReprezentant, acord,
+  ]);
+
+  // Error message to show for a given field, only once a submit was blocked.
+  const fieldError = (id: string) => (showErrors ? errors[id] : undefined);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!acord) {
-      toast.error("Te rugăm să accepți termenii și condițiile.");
+
+    // Block submit and point the user at every missing required field.
+    const missingIds = Object.keys(errors);
+    if (missingIds.length > 0) {
+      setShowErrors(true);
+      // Scroll to (and focus) the first missing field. Object keys preserve
+      // insertion order, which matches DOM order, so [0] is the topmost one.
+      const firstId = missingIds[0];
+      requestAnimationFrame(() => {
+        const el = document.getElementById(`field-${firstId}`);
+        el?.scrollIntoView({ behavior: "smooth", block: "center" });
+        el?.querySelector<HTMLInputElement | HTMLTextAreaElement>(
+          "input:not([type=file]), textarea"
+        )?.focus({ preventScroll: true });
+      });
+      toast.error(
+        missingIds.length === 1
+          ? "A mai rămas un câmp obligatoriu de completat."
+          : `Au mai rămas ${missingIds.length} câmpuri obligatorii de completat.`,
+        { description: "Câmpurile lipsă sunt evidențiate cu roșu mai jos." }
+      );
       return;
     }
+
     if (!supabase) {
       toast.error("Supabase neconfigurat. Lipsesc cheile din .env.");
       return;
@@ -244,10 +344,10 @@ export default function Index() {
       setSubmitted(true);
       window.scrollTo({ top: 0, behavior: "smooth" });
       toast.success("Mulțumim! Formularul a fost trimis.");
-    } catch (err: any) {
+    } catch (err) {
       console.error("[trupe_submissions] submit failed", err);
       toast.error("A apărut o eroare la trimitere.", {
-        description: err?.message ?? String(err),
+        description: err instanceof Error ? err.message : String(err),
       });
     } finally {
       setSubmitting(false);
@@ -310,6 +410,7 @@ export default function Index() {
         {/* Form card */}
         <form
           onSubmit={handleSubmit}
+          noValidate
           className="mt-12 bg-background text-foreground p-8 md:p-14 space-y-16"
         >
           {/* ───────── despre spectacol ───────── */}
@@ -318,7 +419,7 @@ export default function Index() {
               despre spectacol
             </h2>
 
-            <Field label="trupa" required>
+            <Field id="trupa" label="trupa" required error={fieldError("trupa")}>
               <Select value={trupa} onValueChange={handleTrupaChange} required>
                 <SelectTrigger>
                   <SelectValue placeholder="…" />
@@ -334,9 +435,11 @@ export default function Index() {
             </Field>
 
             <Field
+              id="numeSpectacol"
               label="nume spectacol"
               required={!spectacolOptional}
               helper={spectacolOptional ? "opțional pentru această trupă" : undefined}
+              error={fieldError("numeSpectacol")}
             >
               <Input
                 value={numeSpectacol}
@@ -346,7 +449,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="dramaturg" required>
+            <Field id="dramaturg" label="dramaturg" required error={fieldError("dramaturg")}>
               <Input
                 value={dramaturg}
                 onChange={(e) => setDramaturg(e.target.value)}
@@ -356,9 +459,11 @@ export default function Index() {
             </Field>
 
             <Field
+              id="echipaCreativa"
               label="regizor, scenograf, coregraf, coloana sonoră etc."
               required
               helper="Prenume Nume - funcție"
+              error={fieldError("echipaCreativa")}
             >
               <Input
                 value={echipaCreativa}
@@ -368,7 +473,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="distribuție" required helper="Prenume Nume - funcție">
+            <Field id="distributie" label="distribuție" required helper="Prenume Nume - funcție" error={fieldError("distributie")}>
               <Input
                 value={distributie}
                 onChange={(e) => setDistributie(e.target.value)}
@@ -378,9 +483,11 @@ export default function Index() {
             </Field>
 
             <Field
+              id="despreSpectacol"
               label="despre spectacol"
               required
               helper="descriere spectacol / povestea completă / scurt rezumat al piesei, nu viziunea regizorală (500-750 caractere cu spații)"
+              error={fieldError("despreSpectacol")}
             >
               <Textarea
                 value={despreSpectacol}
@@ -391,7 +498,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="necesar tehnic" required>
+            <Field id="necesarTehnic" label="necesar tehnic" required error={fieldError("necesarTehnic")}>
               <Textarea
                 value={necesarTehnic}
                 onChange={(e) => setNecesarTehnic(e.target.value)}
@@ -402,9 +509,11 @@ export default function Index() {
             </Field>
 
             <Field
+              id="photoFile"
               label="fotografie din spectacol sau de la repetiții"
               required
               helper="300 dpi, rezoluție minimă 1024×768 px, format: jpg, jpeg, png, tif, tiff"
+              error={fieldError("photoFile")}
             >
               <label
                 className={cn(
@@ -457,7 +566,7 @@ export default function Index() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <Field label="nume" required>
+                    <Field id={`participant-${i}-nume`} label="nume" required error={fieldError(`participant-${i}-nume`)}>
                       <Input
                         value={p.nume}
                         onChange={(e) => updateParticipant(i, "nume", e.target.value)}
@@ -465,7 +574,7 @@ export default function Index() {
                         required
                       />
                     </Field>
-                    <Field label="prenume" required>
+                    <Field id={`participant-${i}-prenume`} label="prenume" required error={fieldError(`participant-${i}-prenume`)}>
                       <Input
                         value={p.prenume}
                         onChange={(e) => updateParticipant(i, "prenume", e.target.value)}
@@ -475,7 +584,7 @@ export default function Index() {
                     </Field>
                   </div>
 
-                  <Field label="funcție" required>
+                  <Field id={`participant-${i}-functie`} label="funcție" required error={fieldError(`participant-${i}-functie`)}>
                     <Input
                       value={p.functie}
                       onChange={(e) => updateParticipant(i, "functie", e.target.value)}
@@ -485,7 +594,7 @@ export default function Index() {
                   </Field>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <Field label="vârstă" required>
+                    <Field id={`participant-${i}-varsta`} label="vârstă" required error={fieldError(`participant-${i}-varsta`)}>
                       <Input
                         type="number"
                         min={1}
@@ -495,7 +604,7 @@ export default function Index() {
                         required
                       />
                     </Field>
-                    <Field label="nr. telefon" required>
+                    <Field id={`participant-${i}-telefon`} label="nr. telefon" required error={fieldError(`participant-${i}-telefon`)}>
                       <Input
                         type="tel"
                         value={p.telefon}
@@ -507,7 +616,7 @@ export default function Index() {
                   </div>
 
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                    <Field label="mărime tricou" required>
+                    <Field id={`participant-${i}-tricou`} label="mărime tricou" required error={fieldError(`participant-${i}-tricou`)}>
                       <Select
                         value={p.tricou}
                         onValueChange={(v) => updateParticipant(i, "tricou", v)}
@@ -526,9 +635,11 @@ export default function Index() {
                       </Select>
                     </Field>
                     <Field
+                      id={`participant-${i}-restrictii`}
                       label="restricții alimentare"
                       required
                       helper="ex: fără / vegetarian / alergii"
+                      error={fieldError(`participant-${i}-restrictii`)}
                     >
                       <Input
                         value={p.restrictii}
@@ -540,9 +651,11 @@ export default function Index() {
                   </div>
 
                   <Field
+                    id={`participant-${i}-buletin`}
                     label="poză buletin"
                     required
                     helper="format: jpg, jpeg, png, pdf — stocat privat"
+                    error={fieldError(`participant-${i}-buletin`)}
                   >
                     <label
                       className={cn(
@@ -590,7 +703,7 @@ export default function Index() {
               despre coordonator
             </h2>
 
-            <Field label="coordonator trupă" required helper="Prenume Nume">
+            <Field id="coordNume" label="coordonator trupă" required helper="Prenume Nume" error={fieldError("coordNume")}>
               <Input
                 value={coordNume}
                 onChange={(e) => setCoordNume(e.target.value)}
@@ -599,7 +712,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="vârstă coordonator" required>
+            <Field id="coordVarsta" label="vârstă coordonator" required error={fieldError("coordVarsta")}>
               <Input
                 value={coordVarsta}
                 onChange={(e) => setCoordVarsta(e.target.value)}
@@ -608,7 +721,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="tricou coordonator" required>
+            <Field id="coordTricou" label="tricou coordonator" required error={fieldError("coordTricou")}>
               <Select value={coordTricou} onValueChange={setCoordTricou} required>
                 <SelectTrigger>
                   <SelectValue placeholder="…" />
@@ -623,7 +736,7 @@ export default function Index() {
               </Select>
             </Field>
 
-            <Field label="e-mail coordonator" required>
+            <Field id="coordEmail" label="e-mail coordonator" required error={fieldError("coordEmail")}>
               <Input
                 type="email"
                 value={coordEmail}
@@ -633,7 +746,7 @@ export default function Index() {
               />
             </Field>
 
-            <Field label="nr. telefon coordonator" required>
+            <Field id="coordTelefon" label="nr. telefon coordonator" required error={fieldError("coordTelefon")}>
               <Input
                 type="tel"
                 value={coordTelefon}
@@ -666,7 +779,7 @@ export default function Index() {
               </p>
             </div>
 
-            <Field label="persoană fizică / juridică?" required>
+            <Field id="persoanaTip" label="persoană fizică / juridică?" required error={fieldError("persoanaTip")}>
               <Select value={persoanaTip} onValueChange={setPersoanaTip} required>
                 <SelectTrigger>
                   <SelectValue placeholder="…" />
@@ -681,7 +794,7 @@ export default function Index() {
             {/* ── conditional: persoană fizică ── */}
             {persoanaTip === "fizica" && (
               <div className="space-y-8 border-l-2 border-primary pl-6">
-                <Field label="nume complet" required>
+                <Field id="pfNumeComplet" label="nume complet" required error={fieldError("pfNumeComplet")}>
                   <Input
                     value={pfNumeComplet}
                     onChange={(e) => setPfNumeComplet(e.target.value)}
@@ -690,7 +803,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="adresă" required>
+                <Field id="pfAdresa" label="adresă" required error={fieldError("pfAdresa")}>
                   <Input
                     value={pfAdresa}
                     onChange={(e) => setPfAdresa(e.target.value)}
@@ -699,7 +812,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="CNP" required>
+                <Field id="pfCnp" label="CNP" required error={fieldError("pfCnp")}>
                   <Input
                     value={pfCnp}
                     onChange={(e) => setPfCnp(e.target.value)}
@@ -708,7 +821,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="copie CI" required helper="format: jpg, jpeg, png, pdf">
+                <Field id="pfCopieCI" label="copie CI" required helper="format: jpg, jpeg, png, pdf" error={fieldError("pfCopieCI")}>
                   <label
                     className={cn(
                       "inline-flex items-center gap-2 px-4 py-2 cursor-pointer",
@@ -728,7 +841,7 @@ export default function Index() {
                   </label>
                 </Field>
 
-                <Field label="nr. telefon" required>
+                <Field id="pfTelefon" label="nr. telefon" required error={fieldError("pfTelefon")}>
                   <Input
                     type="tel"
                     value={pfTelefon}
@@ -738,7 +851,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="e-mail" required>
+                <Field id="pfEmail" label="e-mail" required error={fieldError("pfEmail")}>
                   <Input
                     type="email"
                     value={pfEmail}
@@ -748,7 +861,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="cont bancar" required>
+                <Field id="pfContBancar" label="cont bancar" required error={fieldError("pfContBancar")}>
                   <Input
                     value={pfContBancar}
                     onChange={(e) => setPfContBancar(e.target.value)}
@@ -757,7 +870,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="banca" required>
+                <Field id="pfBanca" label="banca" required error={fieldError("pfBanca")}>
                   <Input
                     value={pfBanca}
                     onChange={(e) => setPfBanca(e.target.value)}
@@ -771,7 +884,7 @@ export default function Index() {
             {/* ── conditional: persoană juridică ── */}
             {persoanaTip === "juridica" && (
               <div className="space-y-8 border-l-2 border-primary pl-6">
-                <Field label="nume persoană juridică" required>
+                <Field id="pjNume" label="nume persoană juridică" required error={fieldError("pjNume")}>
                   <Input
                     value={pjNume}
                     onChange={(e) => setPjNume(e.target.value)}
@@ -780,7 +893,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="sediu social" required>
+                <Field id="pjSediu" label="sediu social" required error={fieldError("pjSediu")}>
                   <Input
                     value={pjSediu}
                     onChange={(e) => setPjSediu(e.target.value)}
@@ -789,7 +902,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="CUI (codul unic de înregistrare) societate juridică" required>
+                <Field id="pjCui" label="CUI (codul unic de înregistrare) societate juridică" required error={fieldError("pjCui")}>
                   <Input
                     value={pjCui}
                     onChange={(e) => setPjCui(e.target.value)}
@@ -798,7 +911,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="numărul de ordine din Registrul Comerțului" required>
+                <Field id="pjRegCom" label="numărul de ordine din Registrul Comerțului" required error={fieldError("pjRegCom")}>
                   <Input
                     value={pjRegCom}
                     onChange={(e) => setPjRegCom(e.target.value)}
@@ -807,7 +920,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="cont bancar" required>
+                <Field id="pjContBancar" label="cont bancar" required error={fieldError("pjContBancar")}>
                   <Input
                     value={pjContBancar}
                     onChange={(e) => setPjContBancar(e.target.value)}
@@ -816,7 +929,7 @@ export default function Index() {
                   />
                 </Field>
 
-                <Field label="banca" required>
+                <Field id="pjBanca" label="banca" required error={fieldError("pjBanca")}>
                   <Input
                     value={pjBanca}
                     onChange={(e) => setPjBanca(e.target.value)}
@@ -826,9 +939,11 @@ export default function Index() {
                 </Field>
 
                 <Field
+                  id="pjReprezentant"
                   label="numele și funcția reprezentantului"
                   required
                   helper="Prenume Nume - funcție"
+                  error={fieldError("pjReprezentant")}
                 >
                   <Input
                     value={pjReprezentant}
@@ -854,13 +969,20 @@ export default function Index() {
               citește regulamentul festivalului
             </a>
 
-            <div className="flex items-start gap-3 pt-2">
-              <Checkbox
-                id="acord"
-                checked={acord}
-                onCheckedChange={(v) => setAcord(v === true)}
-              />
-              <Label htmlFor="acord" className="text-sm font-normal leading-relaxed cursor-pointer">
+            <div id="field-acord" className="scroll-mt-24 pt-2">
+              <div
+                className={cn(
+                  "flex items-start gap-3",
+                  fieldError("acord") &&
+                    "rounded-md ring-2 ring-destructive ring-offset-2 ring-offset-background"
+                )}
+              >
+                <Checkbox
+                  id="acord"
+                  checked={acord}
+                  onCheckedChange={(v) => setAcord(v === true)}
+                />
+                <Label htmlFor="acord" className="text-sm font-normal leading-relaxed cursor-pointer">
                 Sunt de acord cu{" "}
                 <LegalDialog
                   title="Termeni și condiții"
@@ -892,7 +1014,27 @@ export default function Index() {
                 </a>
                 . *
               </Label>
+              </div>
+              {fieldError("acord") && (
+                <p className="mt-2 text-xs font-medium text-destructive">
+                  {fieldError("acord")}
+                </p>
+              )}
             </div>
+
+            {showErrors && Object.keys(errors).length > 0 && (
+              <div
+                role="alert"
+                className="flex items-start gap-3 rounded-md border border-destructive bg-destructive/10 p-4 text-sm font-medium text-destructive"
+              >
+                <AlertCircle className="size-5 shrink-0" />
+                <p>
+                  {Object.keys(errors).length === 1
+                    ? "A mai rămas un câmp obligatoriu de completat — este evidențiat cu roșu mai sus."
+                    : `Au mai rămas ${Object.keys(errors).length} câmpuri obligatorii de completat — sunt evidențiate cu roșu mai sus.`}
+                </p>
+              </div>
+            )}
 
             <Button
               type="submit"
@@ -911,25 +1053,44 @@ export default function Index() {
 /* ──────────────────────────────────────────────────────────── */
 
 function Field({
+  id,
   label,
   required,
   helper,
+  error,
   children,
 }: {
+  id?: string;
   label: string;
   required?: boolean;
   helper?: string;
+  error?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div>
-      <Label className="text-sm font-normal lowercase">
+    <div id={id ? `field-${id}` : undefined} className="scroll-mt-24">
+      <Label
+        className={cn(
+          "text-sm font-normal lowercase",
+          error && "text-destructive font-medium"
+        )}
+      >
         {label} {required && "*"}
       </Label>
-      <div className="mt-2">{children}</div>
-      {helper && (
+      <div
+        className={cn(
+          "mt-2",
+          error &&
+            "rounded-md ring-2 ring-destructive ring-offset-2 ring-offset-background"
+        )}
+      >
+        {children}
+      </div>
+      {error ? (
+        <p className="mt-2 text-xs font-medium text-destructive">{error}</p>
+      ) : helper ? (
         <p className="mt-2 text-xs italic text-muted-foreground">{helper}</p>
-      )}
+      ) : null}
     </div>
   );
 }
